@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Song review</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --text: #1d1c1a; --muted: #6d6a63; --line: #dedbd3;
+    --wave: #8d8a82; --playhead: #111; --cut: #c0392b;
+    --intro: #9aa5b1; --verse: #3d7dca; --pre_chorus: #7b61c9; --chorus: #e0662b;
+    --post_chorus: #d99a1c; --bridge: #2f9e7a; --instrumental: #9aa5b1; --outro: #9aa5b1;
+    --vocals: #3d7dca; --silence: #d9d6ce;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a; --panel: #212126; --text: #ecebe7; --muted: #9a978f; --line: #35353c;
+      --wave: #7c7a75; --playhead: #fff; --silence: #2c2c33;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px 60px; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+       margin: 28px 0 8px; }
+  .meta, .summary { color: var(--muted); margin: 0 0 4px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+           padding: 12px; }
+  .player { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 14px 0 10px; }
+  audio { flex: 1 1 320px; min-width: 0; }
+  label { color: var(--muted); white-space: nowrap; }
+  canvas { width: 100%; height: 250px; display: block; cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--muted);
+            font-size: 13px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+            margin-right: 5px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover, .line:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+  tr.now td:first-child { box-shadow: inset 3px 0 0 var(--chorus); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; color: #fff;
+         font-size: 13px; }
+  .low { color: var(--cut); }
+  .line { display: flex; gap: 12px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+  .line time { color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 52px; }
+  .line span { flex: 1; unicode-bidi: plaintext; }
+  .line.now { background: color-mix(in srgb, var(--chorus) 22%, transparent); }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="meta" id="meta"></p>
+  <p class="summary" id="summary"></p>
+
+  <div class="player">
+    <audio id="audio" controls preload="auto"></audio>
+    <label><input type="checkbox" id="skip"> Skip suggested cuts while playing</label>
+  </div>
+
+  <div class="panel">
+    <canvas id="timeline"></canvas>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <h2>Sections</h2>
+  <div class="panel scroll">
+    <table>
+      <thead><tr><th>Start</th><th>End</th><th>Section</th><th>Vocals</th><th>Energy</th>
+        <th>Words/s</th><th>Confidence</th><th>Note</th></tr></thead>
+      <tbody id="sections"></tbody>
+    </table>
+  </div>
+
+  <h2>Suggested cuts</h2>
+  <div class="panel scroll">
+    <table>
+      <thead><tr><th>Start</th><th>End</th><th>Length</th><th>Reason</th></tr></thead>
+      <tbody id="cuts"></tbody>
+    </table>
+  </div>
+
+  <h2>Lyrics (automatic transcription)</h2>
+  <div class="panel" id="lyrics"></div>
+</main>
+
+<script>
+const DATA = __DATA__;
+const A = DATA.analysis, DUR = A.source.duration;
+const audio = document.getElementById('audio');
+audio.src = encodeURI(DATA.audio);
+
+const css = name => getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim();
+const fmt = t => Math.floor(t / 60) + ':' + (t % 60).toFixed(1).padStart(4, '0');
+const el = (tag, props = {}, kids = []) => {
+  const node = Object.assign(document.createElement(tag), props);
+  kids.forEach(k => node.append(k));
+  return node;
+};
+const seek = t => { audio.currentTime = t; audio.play(); };
+const cuts = A.suggested_cuts.length ? A.suggested_cuts : [];
+
+const NAME = A.source.title ? `${A.source.title} (${A.source.channel || ''})` : A.source.file;
+document.getElementById('title').textContent = NAME;
+document.title = NAME + ' review';
+document.getElementById('meta').textContent =
+  `${(A.source.lists || []).join(', ')}${A.source.lists ? ' · ' : ''}` +
+  `${A.source.language ? A.source.language + ' · ' : ''}${fmt(DUR)} · ${A.tempo.bpm} BPM · ${A.sections.length} sections` +
+  (A.cuts_applied ? ` · trimmed (${A.cuts_applied.length} cuts applied)` : '');
+document.getElementById('summary').textContent = A.summary || '';
+if (!DATA.peaks.length)
+  document.getElementById('summary').textContent +=
+    ' Audio not downloaded yet: run "batch.py fetch" to hear the song here.';
+
+const sectionRows = A.sections.map(s => {
+  const tag = el('span', {className: 'tag', textContent: `${s.label.replace('_', ' ')} ${s.index}`});
+  tag.style.background = css(s.label);
+  const row = el('tr', {}, [
+    el('td', {textContent: fmt(s.start)}), el('td', {textContent: fmt(s.end)}),
+    el('td', {}, [tag]),
+    el('td', {textContent: Math.round(s.vocal_coverage * 100) + '%'}),
+    el('td', {textContent: s.energy.toFixed(2)}),
+    el('td', {textContent: s.words_per_second.toFixed(1)}),
+    el('td', {textContent: `${s.confidence} (${s.source})`,
+              className: s.confidence === 'low' ? 'low' : ''}),
+    el('td', {textContent: s.note || ''}),
+  ]);
+  row.onclick = () => seek(s.start);
+  document.getElementById('sections').append(row);
+  return row;
+});
+
+const cutBody = document.getElementById('cuts');
+if (!cuts.length) cutBody.append(el('tr', {}, [el('td', {colSpan: 4, textContent: 'None'})]));
+cuts.forEach(c => {
+  const row = el('tr', {}, [
+    el('td', {textContent: fmt(c.start)}), el('td', {textContent: fmt(c.end)}),
+    el('td', {textContent: (c.end - c.start).toFixed(1) + 's'}),
+    el('td', {textContent: c.reason}),
+  ]);
+  row.onclick = () => seek(Math.max(0, c.start - 3));
+  cutBody.append(row);
+});
+
+const lineNodes = A.lyrics.map(l => {
+  const node = el('div', {className: 'line'}, [
+    el('time', {textContent: fmt(l.start)}), el('span', {textContent: l.text})]);
+  node.onclick = () => seek(l.start);
+  document.getElementById('lyrics').append(node);
+  return node;
+});
+if (!A.lyrics.length) document.getElementById('lyrics').textContent = 'No vocals detected.';
+
+[['verse', 'verse'], ['chorus', 'chorus'], ['pre_chorus', 'pre/post chorus, bridge'],
+ ['instrumental', 'intro / instrumental / outro'], ['vocals', 'vocals active'],
+ ['silence', 'silence'], ['cut', 'suggested cut']].forEach(([key, text]) => {
+  const sw = el('span', {className: 'swatch'});
+  sw.style.background = css(key);
+  document.getElementById('legend').append(el('span', {}, [sw, text]));
+});
+
+const canvas = document.getElementById('timeline');
+const ctx = canvas.getContext('2d');
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const x = t => t / DUR * W;
+  const secY = 0, secH = 26, waveY = 34, waveH = 150, actY = 194, actH = 12, tickY = 214;
+
+  A.sections.forEach(s => {
+    ctx.fillStyle = css(s.label);
+    ctx.fillRect(x(s.start) + 1, secY, x(s.end) - x(s.start) - 2, secH);
+    ctx.globalAlpha = 0.10;
+    ctx.fillRect(x(s.start) + 1, waveY, x(s.end) - x(s.start) - 2, waveH);
+    ctx.globalAlpha = 1;
+    const text = `${s.label.replace('_', ' ')} ${s.index}`;
+    ctx.fillStyle = '#fff'; ctx.font = '12px system-ui, sans-serif';
+    if (ctx.measureText(text).width < x(s.end) - x(s.start) - 8)
+      ctx.fillText(text, x(s.start) + 6, secY + 17);
+  });
+
+  ctx.fillStyle = css('wave');
+  const mid = waveY + waveH / 2, bw = W / DATA.peaks.length;
+  DATA.peaks.forEach((p, i) => ctx.fillRect(i * bw, mid - p * waveH / 2, Math.max(bw, 1), p * waveH));
+
+  ctx.strokeStyle = css('chorus'); ctx.lineWidth = 1.5; ctx.beginPath();
+  A.energy.values.forEach((v, i) => {
+    const px = x(i * A.energy.hop_seconds), py = waveY + waveH - v * waveH;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  });
+  ctx.stroke();
+
+  A.activity.forEach(a => {
+    ctx.fillStyle = css(a.type);
+    ctx.fillRect(x(a.start), actY, Math.max(x(a.end) - x(a.start), 1), actH);
+  });
+
+  ctx.fillStyle = css('muted');
+  A.tempo.downbeats.forEach(t => ctx.fillRect(x(t), tickY, 1, 5));
+  ctx.font = '11px system-ui, sans-serif';
+  for (let t = 0; t < DUR; t += 30) ctx.fillText(fmt(t).slice(0, -2), x(t) + 2, tickY + 22);
+
+  A.highlights.forEach(h => {
+    ctx.fillStyle = h.type === 'energy_drop' ? css('verse') : css('chorus');
+    const px = x(h.time);
+    ctx.beginPath(); ctx.moveTo(px - 4, waveY); ctx.lineTo(px + 4, waveY);
+    ctx.lineTo(px, waveY + 7); ctx.fill();
+  });
+
+  cuts.forEach(c => {
+    ctx.fillStyle = css('cut'); ctx.globalAlpha = 0.28;
+    ctx.fillRect(x(c.start), waveY, x(c.end) - x(c.start), actY + actH - waveY);
+    ctx.globalAlpha = 1;
+    ctx.fillRect(x(c.start), waveY, 1.5, actY + actH - waveY);
+    ctx.fillRect(x(c.end) - 1.5, waveY, 1.5, actY + actH - waveY);
+  });
+
+  ctx.fillStyle = css('playhead');
+  ctx.fillRect(x(audio.currentTime || 0), 0, 1.5, tickY + 6);
+}
+
+canvas.onclick = e => seek((e.clientX - canvas.getBoundingClientRect().left) / canvas.clientWidth * DUR);
+const skip = document.getElementById('skip');
+skip.disabled = !cuts.length;
+
+function tick() {
+  const t = audio.currentTime || 0;
+  if (skip.checked && !audio.paused) {
+    const cut = cuts.find(c => t >= c.start && t < c.end - 0.05);
+    if (cut) audio.currentTime = cut.end;
+  }
+  A.sections.forEach((s, i) => sectionRows[i].classList.toggle('now', t >= s.start && t < s.end));
+  A.lyrics.forEach((l, i) => lineNodes[i].classList.toggle('now', t >= l.start && t <= l.end + 0.3));
+  draw();
+  requestAnimationFrame(tick);
+}
+window.addEventListener('resize', draw);
+tick();
+</script>
+</body>
+</html>

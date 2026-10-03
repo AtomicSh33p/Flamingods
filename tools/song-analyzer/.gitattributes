@@ -1,0 +1,2 @@
+# bash refuses Windows line endings, and Windows clones are run from WSL
+*.sh text eol=lf

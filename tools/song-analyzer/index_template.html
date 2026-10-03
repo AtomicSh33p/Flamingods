@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Song analysis overview</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --text: #1d1c1a; --muted: #6d6a63; --line: #dedbd3;
+    --warn: #b4541a; --bad: #c0392b; --link: #2b62b3;
+    --intro: #9aa5b1; --verse: #3d7dca; --pre_chorus: #7b61c9; --chorus: #e0662b;
+    --post_chorus: #d99a1c; --bridge: #2f9e7a; --instrumental: #9aa5b1; --outro: #9aa5b1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17171a; --panel: #212126; --text: #ecebe7; --muted: #9a978f; --line: #35353c;
+            --warn: #e89a5f; --bad: #ef7b6d; --link: #8db4ef; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px 60px; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1300px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .meta { color: var(--muted); margin: 0 0 14px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  input, select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
+                  border-radius: 6px; background: var(--panel); color: var(--text); }
+  input { flex: 1 1 240px; min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+           overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
+           vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
+  td.title { unicode-bidi: plaintext; min-width: 180px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .bar { display: flex; width: 260px; height: 14px; border-radius: 3px; overflow: hidden; }
+  .bar span { display: block; height: 100%; }
+  .flag { display: inline-block; margin: 1px 4px 1px 0; padding: 0 7px; border-radius: 9px;
+          border: 1px solid var(--warn); color: var(--warn); font-size: 12px; white-space: nowrap; }
+  .failed .flag { border-color: var(--bad); color: var(--bad); }
+  .pending td { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Song analysis overview</h1>
+  <p class="meta" id="meta"></p>
+  <div class="controls">
+    <input id="q" type="search" placeholder="Filter by title, artist or flag">
+    <select id="list"><option value="">All lists</option></select>
+    <select id="show">
+      <option value="">All songs</option>
+      <option value="flagged">Flagged only</option>
+      <option value="failed">Failed only</option>
+      <option value="pending">Pending only</option>
+    </select>
+  </div>
+  <div class="panel">
+    <table>
+      <thead><tr><th>Song</th><th>Lists</th><th>Lang</th><th>Length</th><th>BPM</th>
+        <th>Sections</th><th>Cut</th><th>Labels</th><th>Check</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+<script>
+const ROWS = __DATA__;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue('--' + n).trim();
+const fmt = t => t == null ? '' : Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0');
+const el = (tag, props = {}, kids = []) => {
+  const node = Object.assign(document.createElement(tag), props);
+  kids.forEach(k => node.append(k));
+  return node;
+};
+const count = s => ROWS.filter(r => r.status === s).length;
+document.getElementById('meta').textContent =
+  `${ROWS.length} songs · ${count('done')} analyzed · ${count('failed')} failed · ` +
+  `${count('pending')} pending · ${ROWS.filter(r => r.flags.length && r.status === 'done').length} flagged`;
+const listSel = document.getElementById('list');
+[...new Set(ROWS.flatMap(r => r.lists))].forEach(l => listSel.append(el('option', {value: l, textContent: l})));
+
+function render() {
+  const q = document.getElementById('q').value.toLowerCase();
+  const list = listSel.value, show = document.getElementById('show').value;
+  const body = document.getElementById('rows');
+  body.replaceChildren();
+  ROWS.filter(r =>
+    (!list || r.lists.includes(list)) &&
+    (!show || (show === 'flagged' ? r.status === 'done' && r.flags.length : r.status === show)) &&
+    (!q || (r.title + ' ' + r.channel + ' ' + r.flags.join(' ')).toLowerCase().includes(q))
+  ).forEach(r => {
+    const title = r.review ? el('a', {href: r.review, textContent: r.title}) : r.title;
+    const bar = el('div', {className: 'bar'});
+    const total = r.sections.reduce((a, s) => a + s[1], 0) || 1;
+    r.sections.forEach(([label, len]) => {
+      const seg = el('span', {title: `${label} ${fmt(len)}`});
+      seg.style.width = (len / total * 100) + '%';
+      seg.style.background = css(label);
+      bar.append(seg);
+    });
+    body.append(el('tr', {className: r.status}, [
+      el('td', {className: 'title'}, [title, el('div', {className: 'sub', textContent: r.channel})]),
+      el('td', {textContent: r.lists.join(', ')}),
+      el('td', {textContent: r.language || ''}),
+      el('td', {textContent: fmt(r.duration)}),
+      el('td', {textContent: r.bpm ? Math.round(r.bpm) : ''}),
+      el('td', {}, [r.status === 'done' ? bar : r.status]),
+      el('td', {textContent: r.cut ? r.cut.toFixed(0) + 's' : ''}),
+      el('td', {textContent: r.labels || ''}),
+      el('td', {}, r.flags.map(f => el('span', {className: 'flag', textContent: f}))),
+    ]));
+  });
+}
+['q', 'list', 'show'].forEach(id => document.getElementById(id).addEventListener('input', render));
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+.venv/
+.env
+config.json
+songs/
+output/
+# results contain transcribed lyrics of copyrighted songs: shared privately, never committed
+results/
